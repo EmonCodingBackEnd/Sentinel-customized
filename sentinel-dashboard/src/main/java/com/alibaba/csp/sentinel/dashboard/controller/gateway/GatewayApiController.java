@@ -15,9 +15,21 @@
  */
 package com.alibaba.csp.sentinel.dashboard.controller.gateway;
 
+import static com.alibaba.csp.sentinel.adapter.gateway.common.SentinelGatewayConstants.*;
+
+import java.util.*;
+
+import javax.servlet.http.HttpServletRequest;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.util.CollectionUtils;
+import org.springframework.web.bind.annotation.*;
+
 import com.alibaba.csp.sentinel.dashboard.auth.AuthAction;
 import com.alibaba.csp.sentinel.dashboard.auth.AuthService;
-import com.alibaba.csp.sentinel.dashboard.client.SentinelApiClient;
 import com.alibaba.csp.sentinel.dashboard.datasource.entity.gateway.ApiDefinitionEntity;
 import com.alibaba.csp.sentinel.dashboard.datasource.entity.gateway.ApiPredicateItemEntity;
 import com.alibaba.csp.sentinel.dashboard.discovery.MachineInfo;
@@ -26,17 +38,9 @@ import com.alibaba.csp.sentinel.dashboard.domain.vo.gateway.api.AddApiReqVo;
 import com.alibaba.csp.sentinel.dashboard.domain.vo.gateway.api.ApiPredicateItemVo;
 import com.alibaba.csp.sentinel.dashboard.domain.vo.gateway.api.UpdateApiReqVo;
 import com.alibaba.csp.sentinel.dashboard.repository.gateway.InMemApiDefinitionStore;
+import com.alibaba.csp.sentinel.dashboard.rule.DynamicRuleProvider;
+import com.alibaba.csp.sentinel.dashboard.rule.DynamicRulePublisher;
 import com.alibaba.csp.sentinel.util.StringUtil;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.util.CollectionUtils;
-import org.springframework.web.bind.annotation.*;
-
-import javax.servlet.http.HttpServletRequest;
-import java.util.*;
-
-import static com.alibaba.csp.sentinel.adapter.gateway.common.SentinelGatewayConstants.*;
 
 /**
  * Gateway api Controller for manage gateway api definitions.
@@ -53,8 +57,16 @@ public class GatewayApiController {
     @Autowired
     private InMemApiDefinitionStore repository;
 
+    /*@Autowired
+    private SentinelApiClient sentinelApiClient;*/
+
     @Autowired
-    private SentinelApiClient sentinelApiClient;
+    @Qualifier("apiDefinitionProvider")
+    private DynamicRuleProvider<List<ApiDefinitionEntity>> ruleProvider;
+
+    @Autowired
+    @Qualifier("apiDefinitionPublisher")
+    private DynamicRulePublisher<List<ApiDefinitionEntity>> rulePublisher;
 
     @GetMapping("/list.json")
     @AuthAction(AuthService.PrivilegeType.READ_RULE)
@@ -71,7 +83,8 @@ public class GatewayApiController {
         }
 
         try {
-            List<ApiDefinitionEntity> apis = sentinelApiClient.fetchApis(app, ip, port).get();
+            // List<ApiDefinitionEntity> apis = sentinelApiClient.fetchApis(app, ip, port).get();
+            List<ApiDefinitionEntity> apis = ruleProvider.getRules(app);
             repository.saveAll(apis);
             return Result.ofSuccess(apis);
         } catch (Throwable throwable) {
@@ -255,6 +268,13 @@ public class GatewayApiController {
 
     private boolean publishApis(String app, String ip, Integer port) {
         List<ApiDefinitionEntity> apis = repository.findAllByMachine(MachineInfo.of(app, ip, port));
-        return sentinelApiClient.modifyApis(app, ip, port, apis);
+        // return sentinelApiClient.modifyApis(app, ip, port, apis);
+        try {
+            rulePublisher.publish(app, apis);
+            return true;
+        } catch (Throwable throwable) {
+            logger.error("publish gateway apis error:", throwable);
+            return false;
+        }
     }
 }
